@@ -1,7 +1,7 @@
 import time
 import requests
 import os
-from data import yd_token
+# from data import yd_token
 import logging
 import json
 from urllib.parse import quote, unquote
@@ -21,38 +21,56 @@ file_handler.setFormatter(logging.Formatter(fmt="%(asctime)s - %(levelname)s - %
 # Добавляем обработчик к логгеру
 logger.addHandler(file_handler)
 
+# Функция для получения токена
+def get_yd_token(filename):
+    if os.path.exists(filename) and os.path.getsize(filename) > 0:
+        with open(filename, 'r', encoding='utf-8') as f:
+            token = f.read().strip()
+    else:
+        token = input('Введите токен для Yandex.Disk: ').strip()
+        with open(filename, 'w', encoding='utf-8') as f:
+            f.write(token)
+    return token
+
+yd_token = get_yd_token('yd_token.txt')
+
 class YandexAPI:
     """
     Класс для работы с API Яндекс.Диска: создание папки, загрузка файла,
     а также сохранение метаинформации о загруженных файлах.
     """
 
-    def __init__(self, ydtoken: str, folder_name: str = 'py-fpy-spd_132', progress: Optional[tqdm] = None) -> None:
+    def __init__(self, ydtoken: str, folder_name: str = 'py-fpy-spd_132') -> None:
         self.__ydtoken = ydtoken
         self.folder_name = folder_name
-        self.progress = progress
 
     @property
     def headers(self) -> dict:
         return {'Authorization': f'OAuth {self.__ydtoken}'}
+
+    def invalid_token(self):
+        logger.error("❌ Введен неверный токен")
+        with open('yd_token.txt', 'w', encoding='utf-8') as f:
+            f.write('')
+        raise PermissionError("Неверный токен доступа")
 
     def create_folder(self) -> None:
         """Создание папки на Яндекс диске"""
         logger.debug(f'Создание на Яндекс диске папки {self.folder_name}')
         url = 'https://cloud-api.yandex.net/v1/disk/resources'
         params = {'path': self.folder_name}
-        response = requests.put(url, headers=self.headers, params=params)
-
+        try:
+            response = requests.put(url, headers=self.headers, params=params)
+        except UnicodeEncodeError:
+            self.invalid_token()
         if response.status_code == 201:
             logger.info(f"✅ Папка '{self.folder_name}' создана.")
         elif response.status_code == 409:
             logger.warning(f"⚠️ Папка '{self.folder_name}' уже существует.")
+        elif response.status_code == 401:
+            self.invalid_token()
         else:
             logger.error(f"❌ Ошибка при создании папки: {response.text}")
-
-        if self.progress:
-            self.progress.set_description("Создание папки")
-            self.progress.update(1)
 
     def upload_file(self, url_img: str) -> Optional[Dict[str, int]] | None:
         """Загрузка файла на Яндекс диск"""
@@ -76,9 +94,6 @@ class YandexAPI:
             info_response = requests.get(info_url, headers=self.headers, params=params)
             if info_response.status_code == 200:
                 size = info_response.json().get('size')
-                if self.progress:
-                    self.progress.set_description("Загрузка файла")
-                    self.progress.update(1)
                 return {'name': self.file_name, 'size': size}
             time.sleep(1)
         else:
@@ -87,7 +102,7 @@ class YandexAPI:
 
 
     @staticmethod
-    def read_json_info() -> List[dict]:
+    def read_json_info() -> List[dict] | List:
         """
         Чтение мета информации из json-файла
         Если файл пустой или не существует, возвращает пустой список
@@ -100,7 +115,7 @@ class YandexAPI:
             return []
 
     @staticmethod
-    def save_meta_info(meta_data: dict, progress: Optional[tqdm] = None) -> None:
+    def save_meta_info(meta_data: dict) -> None:
         """Сохранение информации о размере изображения в json-файл"""
         data = YandexAPI.read_json_info()
         data.append(meta_data)
@@ -109,19 +124,20 @@ class YandexAPI:
             logger.info("Сохранение информации о размере фото")
             logger.info('\n'+'='*60+'\n')
 
-        if progress:
-            progress.set_description("Сохранение информации")
-            progress.update(1)
-
 if __name__ == "__main__":
     image_text = input('Введите надпись для изображения с котом: ')
     url_image = rf"https://cataas.com/cat/says/{quote(image_text)}"
 
     with tqdm(total=3, desc='Начало работы') as progress:
         # Работа с Яндекс Диском
-        ya_disk = YandexAPI(yd_token, progress=progress)
+        ya_disk = YandexAPI(yd_token)
+        progress.set_description("Создание папки")
         ya_disk.create_folder()
-
+        progress.update(1)
+        progress.set_description("Загрузка файла")
         meta_data = ya_disk.upload_file(url_image)
+        progress.update(1)
         if meta_data:
-            ya_disk.save_meta_info(meta_data, progress)
+            progress.set_description("Сохранение информации")
+            ya_disk.save_meta_info(meta_data)
+            progress.update(1)
