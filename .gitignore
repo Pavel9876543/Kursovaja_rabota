@@ -1,4 +1,7 @@
 data.py
 venv/
+meta_info.json
+yd_token.txt
+my_logs.log
 .idea/
 __pycache__/
